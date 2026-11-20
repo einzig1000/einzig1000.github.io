@@ -1,0 +1,168 @@
+/* =========================================================
+   ページを地層にして掘り進める演出（js/dig.js が動いたときだけ使われる）
+   html.dig-strata … 掘って読むモード：各セクションを画面いっぱいの「層」として重ねる
+   html.dig-flat   … 普通に読むモード：いつもの縦長ページ＋右下に「掘って読む」ボタン
+
+   層の作り：.dig-layer（スクロールする入れ物）> .dig-sheet（掘られる紙）> セクション
+   普通に読むモードでは入れ物も紙も display: contents にして、元のページと同じ並びにする
+   ========================================================= */
+.dig-layer, .dig-sheet { display: contents; }
+.dig-surface-layer, .dig-ui, .dig-edges { display: none; }
+
+.dig-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 34px; padding: 0 12px; border-radius: 8px;
+  border: 1.5px solid var(--text); background: transparent; color: var(--text);
+  font-family: var(--font-sans); font-size: 13px; font-weight: 700; line-height: 1;
+  white-space: nowrap; cursor: pointer;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.dig-btn:hover { background: var(--text); color: var(--bg); }
+.dig-btn[aria-pressed="false"] { color: var(--muted); border-color: var(--line); }
+.dig-btn[aria-pressed="false"]:hover { color: var(--bg); border-color: var(--text); }
+.dig-btn-primary { min-height: 44px; padding: 0 22px; font-size: 15px; border-color: var(--accent); background: var(--accent); color: #fff; }
+.dig-btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+
+/* 普通に読むモードで、掘るモードに戻るボタン */
+button.dig-modebtn {
+  display: none; position: fixed; right: 16px; bottom: 16px; z-index: 60;
+  min-height: 44px; padding: 0 18px; font-size: 14px;
+  background: var(--surface); box-shadow: 0 10px 30px rgba(10, 14, 24, .2);
+}
+html.dig-flat button.dig-modebtn { display: inline-flex; }
+
+@media screen {
+  html.dig-strata, html.dig-strata body { height: 100%; overflow: hidden; }
+  html.dig-strata #main {
+    position: fixed; top: var(--dig-top, 60px); left: 0; right: 0; bottom: 0;
+    overflow: hidden; isolation: isolate;
+  }
+  html.dig-strata .site-footer { display: none; }
+  html.dig-strata .site-nav a[aria-current] { color: var(--accent-strong); background: var(--accent-soft); }
+
+  /* 層の入れ物：画面いっぱいに重ね、長い層は層の中でスクロールする。
+     入れ物自体はクリックやスクロールの的にならず、紙の上だけがこの層として反応する
+     （掘った穴の上ではその下の層に当たるので、下の層をスクロールできる） */
+  html.dig-strata .dig-layer {
+    display: block; position: absolute; inset: 0;
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-width: thin;
+    pointer-events: none;
+  }
+  /* 層の紙：掘られる面。中身と一緒にスクロールするので、掘った跡も中身に付いて動く */
+  html.dig-strata .dig-sheet {
+    display: flex; flex-direction: column; position: relative;
+    min-height: 100%; pointer-events: auto;
+    background-color: var(--bg);
+  }
+  html.dig-strata .dig-sheet.is-alt { background-color: var(--bg-alt); }
+  html.dig-strata .dig-sheet > * { flex-shrink: 0; margin: 0; }
+  html.dig-strata .dig-sheet > section:last-child { flex-grow: 1; padding-bottom: 140px; }
+  html.dig-strata .dig-sheet > .section { padding-top: 48px; }
+  html.dig-strata .dig-sheet > .hero { padding-top: 48px; padding-bottom: 8px; }
+  /* プロフィールの層では、スキル・資格をプロフィールと同じ画面に続けて書く */
+  html.dig-strata .dig-sheet > .hero + .section { background: none; padding-top: 40px; }
+  html.dig-strata .dig-sheet > .hero + .section .section-head { margin-bottom: 28px; }
+  html.dig-strata .dig-edges { display: block; position: absolute; left: 0; top: 0; pointer-events: none; }
+
+  /* 掘り終えた層は見えなくする（読み上げソフトには残す） */
+  html.dig-strata .dig-layer.is-dug { clip-path: inset(50%) !important; }
+  html.dig-strata .dig-sheet.is-diggable {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M9 9L28 28' stroke='%231c1f26' stroke-width='6'/%3E%3Cpath d='M9 9L28 28' stroke='%23a0683a' stroke-width='3'/%3E%3Cpath d='M4 19Q6 6 19 4' stroke='%231c1f26' stroke-width='6.5'/%3E%3Cpath d='M4 19Q6 6 19 4' stroke='%23d6dbe3' stroke-width='3.5'/%3E%3C/g%3E%3C/svg%3E") 9 9, crosshair;
+    user-select: none; -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html.dig-strata .dig-sheet.is-diggable img { -webkit-user-drag: none; }
+  html.dig-strata .dig-layer.is-filling { animation: dig-fill .45s ease-out; }
+  @keyframes dig-fill { from { opacity: 0; transform: translateY(-16px); } }
+
+  /* 地表（ブロックの地形）。指でなぞっても掘れるよう、スクロールにはしない */
+  html.dig-strata .dig-surface-layer { overflow: hidden; }
+  html.dig-strata .dig-surface { display: block; height: 100%; background: none; touch-action: none; }
+  .dig-surface canvas, .dig-ui canvas { position: absolute; left: 0; top: 0; display: block; }
+
+  /* 重ね合わせ（穴の影・パーティクル・案内・右下の表示） */
+  html.dig-strata .dig-ui { display: block; position: absolute; inset: 0; z-index: 40; pointer-events: none; }
+
+  /* 最初に出る説明 */
+  .dig-hint {
+    position: absolute; left: 50%; top: 50%;
+    width: min(460px, calc(100% - 32px));
+    transform: translate(-50%, -50%);
+    padding: 22px 24px 20px; text-align: center; pointer-events: auto;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 18px 48px rgba(10, 14, 24, .35);
+    transition: opacity .3s ease, transform .3s ease, visibility 0s;
+  }
+  .dig-hint-title { font-size: 20px; font-weight: 900; letter-spacing: .04em; word-break: auto-phrase; text-wrap: balance; }
+  .dig-hint-text { margin-top: 8px; font-size: 14px; line-height: 1.7; color: var(--muted); }
+  .dig-hint-path {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 0;
+    margin-top: 12px; font-size: 12px; font-weight: 700; color: var(--teal);
+  }
+  .dig-hint-path li + li::before { content: "→"; margin: 0 6px; color: var(--muted); font-weight: 500; }
+  .dig-hint-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; margin-top: 16px; }
+  .dig-hint-actions .dig-btn:not(.dig-btn-primary) { min-height: 44px; padding: 0 18px; font-size: 14px; }
+  .dig-ui.is-started .dig-hint {
+    opacity: 0; visibility: hidden; transform: translate(-50%, -42%);
+    transition: opacity .3s ease, transform .3s ease, visibility 0s .3s;
+  }
+  .dig-touch { display: none; }
+  @media (hover: none) {
+    .dig-pc { display: none; }
+    .dig-touch { display: inline; }
+  }
+
+  /* 層に着いたときのお知らせ */
+  .dig-toast {
+    position: absolute; left: 50%; top: 16px; max-width: calc(100% - 32px);
+    transform: translate(-50%, -8px); opacity: 0; visibility: hidden;
+    padding: 8px 18px; border-radius: 999px;
+    background: var(--text); color: var(--bg);
+    font-size: 14px; font-weight: 700; text-align: center;
+    box-shadow: 0 10px 30px rgba(10, 14, 24, .25);
+    transition: opacity .3s ease, transform .3s ease, visibility 0s .3s;
+  }
+  .dig-toast.is-on { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity .3s ease, transform .3s ease; }
+
+  /* 右下の表示（いまの層・レベル・ポイント・崩れるまでのゲージ・ボタン） */
+  .dig-hud {
+    position: absolute; right: 16px; bottom: 16px; pointer-events: auto;
+    display: grid; gap: 8px; justify-items: end;
+    max-width: calc(100% - 32px);
+    padding: 10px 10px 10px 14px; border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(10, 14, 24, .18);
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.4;
+  }
+  .dig-hud.is-flash { animation: dig-flash .6s ease-out; }
+  @keyframes dig-flash { 30% { transform: scale(1.05); box-shadow: 0 0 0 4px var(--accent-soft), 0 10px 30px rgba(10, 14, 24, .18); } }
+  .dig-hud-info { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 14px; padding-right: 4px; }
+  .dig-depth { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--font-sans); font-weight: 700; white-space: nowrap; }
+  .dig-depth-no { color: var(--teal); }
+  .dig-depth-name:empty { display: none; }
+  .dig-stat { display: inline-flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  .dig-lv { color: var(--accent-strong); font-weight: 700; }
+  .dig-pt { font-weight: 700; }
+  .dig-gauge { width: 72px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .dig-gauge i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
+  .dig-hud-btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+
+  /* 状況に合わせてボタンを出し分ける（.dig-btn の display より優先させるため .dig-ui を付けている） */
+  .dig-ui:not(.is-started) .dig-after-start { display: none; }
+  .dig-ui[data-phase="bottom"] .dig-not-bottom { display: none; }
+  .dig-ui:not([data-phase="bottom"]) .dig-only-bottom { display: none; }
+
+  @media (max-width: 520px) {
+    .dig-hud { left: 12px; right: 12px; bottom: 12px; max-width: none; justify-items: stretch; font-size: 12px; }
+    .dig-hud-info { justify-content: space-between; }
+    .dig-gauge { width: 56px; }
+    .dig-hint-title { font-size: 18px; }
+  }
+}
+
+@media print {
+  .dig-layer, .dig-sheet { display: contents !important; }
+  .dig-ui, .dig-surface-layer, .dig-edges, .dig-modebtn { display: none !important; }
+}
