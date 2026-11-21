@@ -1,10 +1,9 @@
 /* =========================================================
    ページを地層にして掘り進める演出（js/dig.js が動いたときだけ使われる）
-   html.dig-strata … 掘って読むモード：各セクションを画面いっぱいの「層」として重ねる
-   html.dig-flat   … 普通に読むモード：いつもの縦長ページ＋右下に「掘って読む」ボタン
+   html.dig-strata … 各セクションを画面いっぱいの「層」として重ねる
 
    層の作り：.dig-layer（スクロールする入れ物）> .dig-sheet（掘られる紙）> セクション
-   普通に読むモードでは入れ物も紙も display: contents にして、元のページと同じ並びにする
+   JavaScript が動かないときや印刷では、入れ物も紙も display: contents にして元のページと同じ並びにする
    ========================================================= */
 .dig-layer, .dig-sheet { display: contents; }
 .dig-surface-layer, .dig-ui, .dig-edges { display: none; }
@@ -20,16 +19,6 @@
 .dig-btn:hover { background: var(--text); color: var(--bg); }
 .dig-btn[aria-pressed="false"] { color: var(--muted); border-color: var(--line); }
 .dig-btn[aria-pressed="false"]:hover { color: var(--bg); border-color: var(--text); }
-.dig-btn-primary { min-height: 44px; padding: 0 22px; font-size: 15px; border-color: var(--accent); background: var(--accent); color: #fff; }
-.dig-btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
-
-/* 普通に読むモードで、掘るモードに戻るボタン */
-button.dig-modebtn {
-  display: none; position: fixed; right: 16px; bottom: 16px; z-index: 60;
-  min-height: 44px; padding: 0 18px; font-size: 14px;
-  background: var(--surface); box-shadow: 0 10px 30px rgba(10, 14, 24, .2);
-}
-html.dig-flat button.dig-modebtn { display: inline-flex; }
 
 @media screen {
   html.dig-strata, html.dig-strata body { height: 100%; overflow: hidden; }
@@ -81,38 +70,8 @@ html.dig-flat button.dig-modebtn { display: inline-flex; }
   html.dig-strata .dig-surface { display: block; height: 100%; background: none; touch-action: none; }
   .dig-surface canvas, .dig-ui canvas { position: absolute; left: 0; top: 0; display: block; }
 
-  /* 重ね合わせ（穴の影・パーティクル・案内・右下の表示） */
+  /* 重ね合わせ（パーティクル・お知らせ・右下の表示） */
   html.dig-strata .dig-ui { display: block; position: absolute; inset: 0; z-index: 40; pointer-events: none; }
-
-  /* 最初に出る説明 */
-  .dig-hint {
-    position: absolute; left: 50%; top: 50%;
-    width: min(460px, calc(100% - 32px));
-    transform: translate(-50%, -50%);
-    padding: 22px 24px 20px; text-align: center; pointer-events: auto;
-    background: var(--surface); color: var(--text);
-    border: 1px solid var(--line); border-radius: var(--radius);
-    box-shadow: 0 18px 48px rgba(10, 14, 24, .35);
-    transition: opacity .3s ease, transform .3s ease, visibility 0s;
-  }
-  .dig-hint-title { font-size: 20px; font-weight: 900; letter-spacing: .04em; word-break: auto-phrase; text-wrap: balance; }
-  .dig-hint-text { margin-top: 8px; font-size: 14px; line-height: 1.7; color: var(--muted); }
-  .dig-hint-path {
-    display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 0;
-    margin-top: 12px; font-size: 12px; font-weight: 700; color: var(--teal);
-  }
-  .dig-hint-path li + li::before { content: "→"; margin: 0 6px; color: var(--muted); font-weight: 500; }
-  .dig-hint-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; margin-top: 16px; }
-  .dig-hint-actions .dig-btn:not(.dig-btn-primary) { min-height: 44px; padding: 0 18px; font-size: 14px; }
-  .dig-ui.is-started .dig-hint {
-    opacity: 0; visibility: hidden; transform: translate(-50%, -42%);
-    transition: opacity .3s ease, transform .3s ease, visibility 0s .3s;
-  }
-  .dig-touch { display: none; }
-  @media (hover: none) {
-    .dig-pc { display: none; }
-    .dig-touch { display: inline; }
-  }
 
   /* 層に着いたときのお知らせ */
   .dig-toast {
@@ -149,8 +108,7 @@ html.dig-flat button.dig-modebtn { display: inline-flex; }
   .dig-gauge i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
   .dig-hud-btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 
-  /* 状況に合わせてボタンを出し分ける（.dig-btn の display より優先させるため .dig-ui を付けている） */
-  .dig-ui:not(.is-started) .dig-after-start { display: none; }
+  /* 最下層かどうかでボタンを出し分ける（.dig-btn の display より優先させるため .dig-ui を付けている） */
   .dig-ui[data-phase="bottom"] .dig-not-bottom { display: none; }
   .dig-ui:not([data-phase="bottom"]) .dig-only-bottom { display: none; }
 
@@ -158,11 +116,10 @@ html.dig-flat button.dig-modebtn { display: inline-flex; }
     .dig-hud { left: 12px; right: 12px; bottom: 12px; max-width: none; justify-items: stretch; font-size: 12px; }
     .dig-hud-info { justify-content: space-between; }
     .dig-gauge { width: 56px; }
-    .dig-hint-title { font-size: 18px; }
   }
 }
 
 @media print {
   .dig-layer, .dig-sheet { display: contents !important; }
-  .dig-ui, .dig-surface-layer, .dig-edges, .dig-modebtn { display: none !important; }
+  .dig-ui, .dig-surface-layer, .dig-edges { display: none !important; }
 }

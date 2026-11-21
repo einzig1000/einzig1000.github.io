@@ -4,8 +4,7 @@
 // ・掘った跡は層の中身に付いていて、層をスクロールすると一緒に動く
 // ・掘った穴の上でスクロールすると下の層、残っている部分の上でスクロールすると上の層が動く
 // ・本文の HTML は消さずに層ごとの入れ物に入れて重ねているだけなので、検索エンジンや読み上げソフトには普段どおり届く
-// ・「普通に読む」で縦に長い普段のページに戻せる（選んだことはこのブラウザに保存する）
-// ・JavaScript が動かない環境と「視差効果を減らす」設定の環境では、普段どおりのページのまま
+// ・JavaScript が動かない環境と「視差効果を減らす」設定の環境では、縦に長い普段のページのまま
 // ・音は Web Audio でその場で合成している（外部の音素材は使っていない）。最初は OFF
 (() => {
   "use strict";
@@ -22,16 +21,16 @@
   const CELL_CSS = 8;     // ブロック1個の大きさ（CSS px）
   const CLEAR_AT = 0.7;   // 1画面分のこれだけのブロックを掘ると、残りが一気に崩れて下の層に進む（長い層でも基準は1画面分）
   const MAX_PARTS = 700;  // 同時に出すパーティクルの上限
-  // 採掘レベル：ポイントが貯まるほど、一度に掘れる範囲（ブロック数）が広がる
+  // 採掘レベル：ポイントが貯まるほど、一度に掘れる範囲（半径・ブロック数）が広がる。クリックもドラッグも同じ範囲
   const LEVELS = [
-    { pt: 0,    area: 3,  trail: 1.3 },
-    { pt: 25,   area: 6,  trail: 2.2 },
-    { pt: 220,  area: 10, trail: 3.4 },
-    { pt: 520,  area: 16, trail: 5.0 },
-    { pt: 1250, area: 26, trail: 7.5 },
+    { pt: 0,    area: 3 },
+    { pt: 25,   area: 6 },
+    { pt: 220,  area: 10 },
+    { pt: 520,  area: 16 },
+    { pt: 1250, area: 22 },
   ];
+  const DRAG_PT = 0.25;          // ドラッグで掘ったときのポイントの倍率（範囲が広いので、レベルが上がりすぎないよう抑える）
   const SOUND_KEY = "dig-sound"; // "on" のときだけ音を出す（最初は OFF）
-  const MODE_KEY = "dig-mode";   // "flat" なら普通に読むモードで開く
   // 掘って読むときの層。プロフィールとスキル・資格はひとつの層にまとめる
   const GROUPS = [
     { ids: ["top", "skills"], name: "プロフィール" },
@@ -116,15 +115,6 @@
   ui.className = "dig-ui";
   ui.innerHTML = `
     <canvas class="dig-fx" aria-hidden="true"></canvas>
-    <div class="dig-hint">
-      <p class="dig-hint-title" aria-hidden="true">このページは地層になっています</p>
-      <p class="dig-hint-text" aria-hidden="true"><span class="dig-pc">クリックで範囲採掘、ドラッグで掘り進めます。</span><span class="dig-touch">タップで範囲採掘、なぞると掘り進めます。</span>7割掘ると崩れて下の層が現れ、その画面もまた掘れます。</p>
-      <ol class="dig-hint-path" aria-hidden="true">${L.map((ly) => `<li>${ly.name}</li>`).join("")}</ol>
-      <div class="dig-hint-actions">
-        <button type="button" class="dig-btn dig-btn-primary" data-act="clear" aria-label="一気に掘る（演出をスキップ）">一気に掘る</button>
-        <button type="button" class="dig-btn" data-act="flat">普通に読む</button>
-      </div>
-    </div>
     <p class="dig-toast" role="status" aria-live="polite"></p>
     <div class="dig-hud">
       <div class="dig-hud-info" aria-hidden="true">
@@ -134,9 +124,9 @@
       </div>
       <div class="dig-hud-btns">
         <button type="button" class="dig-btn" data-act="sound" aria-pressed="false">音 OFF</button>
-        <button type="button" class="dig-btn dig-after-start dig-not-bottom" data-act="clear" aria-label="一気に掘る（この層を崩す）">一気に掘る</button>
+        <button type="button" class="dig-btn dig-not-bottom" data-act="clear" aria-label="一気に掘る（この層を崩す）">一気に掘る</button>
+        <button type="button" class="dig-btn dig-not-bottom" data-act="refill" aria-label="埋めなおす（この層の穴を元に戻す）">埋めなおす</button>
         <button type="button" class="dig-btn dig-only-bottom" data-act="restart">最初から掘る</button>
-        <button type="button" class="dig-btn dig-after-start" data-act="flat">普通に読む</button>
       </div>
     </div>`;
   main.prepend(ui);
@@ -146,12 +136,6 @@
   const edges = document.createElement("canvas");
   edges.className = "dig-edges";
   edges.setAttribute("aria-hidden", "true");
-
-  const modeBtn = document.createElement("button");
-  modeBtn.type = "button";
-  modeBtn.className = "dig-btn dig-modebtn";
-  modeBtn.textContent = "掘って読む";
-  document.body.appendChild(modeBtn);
 
   const blocks = surf.sheet.querySelector(".dig-blocks");
   const fxc = ui.querySelector(".dig-fx");
@@ -166,7 +150,6 @@
   const gaugeEl = ui.querySelector(".dig-gauge i");
   const toastEl = ui.querySelector(".dig-toast");
   const soundBtn = ui.querySelector('[data-act="sound"]');
-  const hintClearBtn = ui.querySelector('.dig-hint [data-act="clear"]');
   const hudClearBtn = ui.querySelector('.dig-hud [data-act="clear"]');
   const navLinks = [...document.querySelectorAll('.site-nav a[href^="#"]')];
   const probe = document.createElement("i");
@@ -174,8 +157,7 @@
   ui.appendChild(probe);
 
   /* ---------- 状態 ---------- */
-  let strata = false;     // 掘って読むモードか
-  let cur = 0;            // いま見えているいちばん上の層
+  let cur = 0;           // いま見えているいちばん上の層
   let target = 0;         // 崩れたあとに進む層（ナビで深い層を選んだときは一気に進む）
   let pendingId = "";     // 層に着いたあとにスクロールして見せるセクション
   let phase = "active";   // active（掘れる）→ clearing（崩れている途中）／ bottom（最下層）
@@ -489,7 +471,8 @@
     texts.push({ x, y, s: str, big, life: big ? 70 : 40 });
   }
 
-  function breakCell(i, withFx) {
+  // ptRate：ポイントの倍率（クリックは 1、ドラッグは DRAG_PT）
+  function breakCell(i, withFx, ptRate = 1) {
     const t = cells[i];
     if (!t) return;
     cells[i] = 0;
@@ -502,11 +485,11 @@
     if (isOre(t)) tally.ore++;
     if (withFx || isOre(t)) spawn(i, t, isOre(t) ? 7 : 2);
     if (phase === "active") {
-      const pt = ORE_PT[t] || 1;
-      points += pt;
-      if (pt > 1) {
+      const base = ORE_PT[t] || 1;
+      points += base * ptRate;
+      if (base > 1) {
         const p = centerOf(i);
-        addText(p.x, p.y - viewY - 6, "+" + pt, false);
+        addText(p.x, p.y - viewY - 6, "+" + Math.round(base * ptRate), false);
       }
     }
   }
@@ -523,10 +506,6 @@
     }
   }
 
-  function markStarted() {
-    ui.classList.add("is-started");
-  }
-
   // クリック：範囲採掘。中心から外側へ時間差で崩す
   function areaDig(x, y) {
     if (phase !== "active") return;
@@ -541,21 +520,24 @@
     }
     rings.push({ x, y: y - viewY, R: R * s, life: 18 });
     lastX = x; lastY = y;
-    markStarted();
     kick();
   }
 
-  // ドラッグ：軌跡に沿ってその場で掘る
+  // ドラッグ：軌跡に沿って、クリックと同じ範囲をその場で掘る
   function lineDig(x0, y0, x1, y1) {
     if (phase !== "active") return;
-    const R = LEVELS[lv].trail;
-    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (s * 0.6)));
+    const R = LEVELS[lv].area;
+    // 範囲が広いほど間隔をあけて調べる（円が重なるので見た目は変わらない）
+    const step = Math.max(s * 0.6, R * s * 0.25);
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / step));
+    const pFx = Math.min(0.3, 40 / (R * R));
     for (let k = 0; k <= n; k++) {
       const x = x0 + ((x1 - x0) * k) / n, y = y0 + ((y1 - y0) * k) / n;
-      forCellsIn(x, y, R, (i, d) => { if (d <= R) breakCell(i, Math.random() < 0.3); });
+      forCellsIn(x, y, R + 1, (i, d, c, r) => {
+        if (d <= R + (hash(c, r, 99) - 0.5) * 1.6) breakCell(i, Math.random() < pFx, DRAG_PT);
+      });
     }
     lastX = x1; lastY = y1;
-    markStarted();
     kick();
   }
 
@@ -566,7 +548,6 @@
     ui.dataset.phase = phase;
     if (target <= cur) target = cur + 1;
     down = null;
-    markStarted();
     const now = performance.now();
     const cc = x / s, cr = y / s, maxD = Math.hypot(cols, Math.min(rows, (H / s) * 1.5)) || 1;
     for (let i = 0; i < cells.length; i++) {
@@ -579,14 +560,15 @@
     kick();
   }
 
-  // 層 k をいちばん上にする。how: "down"（崩れて到達）／"up"（上の層へ戻る）／"fill"（地表を埋める）／"init"
+  // 層 k をいちばん上にする。how: "down"（崩れて到達）／"up"（上の層へ戻る）／"refill"（いまの層を埋めなおす）
+  // ／"fill"（地表を埋める）／"init"
   function enter(k, how) {
     queue.length = 0;
     down = null;
     cur = k;
     target = k;
     phase = k === LAST ? "bottom" : "active";
-    if (k === 0 && how === "up") seed = newSeed();
+    if (k === 0 && (how === "up" || how === "refill")) seed = newSeed();
     L.forEach((ly, i) => {
       ly.layer.classList.toggle("is-dug", i < k);
       ly.sheet.classList.toggle("is-diggable", i === k && phase === "active");
@@ -603,11 +585,16 @@
         toast(`最下層「${L[k].name}」に到達！`);
       } else {
         gridFlash = 1; // 画面がブロックでできていることを一瞬見せる
-        toast(`地下${k}層「${L[k].name}」に到達。この画面も掘れます`);
+        toast(`第${k}層「${L[k].name}」に到達！この画面も掘れます`);
       }
     } else if (how === "up") {
       playFill(L[k].layer);
       toast(k === 0 ? "地表から掘り直せます" : `「${L[k].name}」の層まで埋め戻しました`);
+    } else if (how === "refill") {
+      // 地表はブロックが降ってくる演出、画面の層は網目を一瞬見せて、元どおりになったことを伝える
+      if (k === 0) playFill(L[k].layer);
+      else gridFlash = 1;
+      toast(`「${L[k].name}」を埋めなおしました`);
     } else if (how === "fill") {
       playFill(L[k].layer);
     }
@@ -616,10 +603,8 @@
 
   // 層 k へ移動する（ヘッダーのナビ・ページ内リンク・キーボード操作から）
   function jumpTo(k, x, y) {
-    if (!strata) return;
     k = Math.max(0, Math.min(LAST, k));
     if (k === cur) return;
-    markStarted();
     if (k > cur) {
       if (phase === "active") {
         target = k;
@@ -651,6 +636,12 @@
     const sec = id && document.getElementById(id);
     if (!sec || !ly.sheet.contains(sec)) return;
     ly.layer.scrollTo({ top: sec === ly.secs[0] ? 0 : sec.offsetTop, behavior: smooth ? "smooth" : "auto" });
+  }
+
+  // いま見ている層の穴をすべて埋めなおす（スクロール位置とレベルはそのまま。崩れている途中なら止める）
+  function refill() {
+    if (cur === LAST) return;
+    enter(cur, "refill");
   }
 
   function restart() {
@@ -686,10 +677,10 @@
 
   const setText = (el, str) => { if (el.textContent !== str) el.textContent = str; };
   function updateHud() {
-    setText(depthNoEl, cur === 0 ? "地表" : cur === LAST ? "最下層" : `地下${cur}層`);
+    setText(depthNoEl, cur === 0 ? "地表" : cur === LAST ? "最下層" : `第${cur}層`);
     setText(depthNameEl, cur === 0 ? "" : L[cur].name);
     setText(lvEl, `Lv.${lv + 1}`);
-    setText(ptEl, points.toLocaleString("ja-JP"));
+    setText(ptEl, Math.floor(points).toLocaleString("ja-JP"));
     const prog = phase === "active" && clearNeed ? Math.min(1, (total - remain) / clearNeed) : 1;
     gaugeEl.style.width = prog * 100 + "%";
   }
@@ -697,10 +688,7 @@
   // ヘッダーのナビで、いま読んでいるセクションに印をつける
   function updateNav() {
     let id = "";
-    if (strata) {
-      const ly = L[cur];
-      for (const sec of ly.secs) if (!id || sec.offsetTop - viewY <= H * 0.4) id = sec.id;
-    }
+    for (const sec of L[cur].secs) if (!id || sec.offsetTop - viewY <= H * 0.4) id = sec.id;
     for (const a of navLinks) {
       if (id && a.getAttribute("href") === "#" + id) a.setAttribute("aria-current", "location");
       else a.removeAttribute("aria-current");
@@ -737,7 +725,6 @@
 
   function frame(now) {
     raf = 0;
-    if (!strata) return;
     const dt = Math.min(3, (now - last) / 16.667);
     last = now;
     readView();
@@ -841,7 +828,7 @@
 
   /* ---------- 操作 ---------- */
   // ここに当たったときは掘らずに、リンクやボタンとして普通に動かす
-  const INTERACTIVE = "a[href], button, input, select, textarea, summary, label, [tabindex], .dig-hint, .dig-hud";
+  const INTERACTIVE = "a[href], button, input, select, textarea, summary, label, [tabindex], .dig-hud";
 
   function stagePos(e) {
     const r = main.getBoundingClientRect();
@@ -860,7 +847,7 @@
     return e.clientX - r.left - t.clientLeft >= t.clientWidth || e.clientY - r.top - t.clientTop >= t.clientHeight;
   }
   const canDig = (e) =>
-    strata && phase === "active" && e.target instanceof Element && !e.target.closest(INTERACTIVE) && !onScrollbar(e);
+    phase === "active" && e.target instanceof Element && !e.target.closest(INTERACTIVE) && !onScrollbar(e);
 
   let lastPointer = -1e9;
   document.addEventListener("pointerdown", () => { lastPointer = performance.now(); }, true);
@@ -880,7 +867,6 @@
   });
 
   main.addEventListener("pointermove", (e) => {
-    if (!strata) return;
     if (down && e.pointerId === down.id) {
       readView();
       const p = sheetPos(e);
@@ -907,12 +893,12 @@
 
   main.addEventListener("pointercancel", () => { down = null; }); // スクロールが始まったら掘らない
   main.addEventListener("pointerleave", () => { hover = null; kick(); });
-  main.addEventListener("dragstart", (e) => { if (strata && phase === "active") e.preventDefault(); });
+  main.addEventListener("dragstart", (e) => { if (phase === "active") e.preventDefault(); });
 
   // いまの層をスクロールしたら、ナビの印を合わせる
   for (const ly of L) {
     ly.layer.addEventListener("scroll", () => {
-      if (!strata || ly !== L[cur]) return;
+      if (ly !== L[cur]) return;
       readView();
       updateNav();
       kick();
@@ -923,31 +909,23 @@
     const btn = e.target.closest("[data-act]");
     if (!btn) return;
     const act = btn.dataset.act;
-    const fromHint = !!btn.closest(".dig-hint");
     if (act === "clear") {
       initAudio();
       readView();
       collapse(SW / 2, viewY + H / 2);
-      if (fromHint) hudClearBtn.focus({ preventScroll: true });
     } else if (act === "sound") {
       setSound(!soundOn);
+    } else if (act === "refill") {
+      refill();
     } else if (act === "restart") {
       restart();
       hudClearBtn.focus({ preventScroll: true });
-    } else if (act === "flat") {
-      setMode(true, true);
-      modeBtn.focus({ preventScroll: true });
     }
-  });
-
-  modeBtn.addEventListener("click", () => {
-    startStrata(0);
-    (ui.classList.contains("is-started") ? hudClearBtn : hintClearBtn).focus({ preventScroll: true });
   });
 
   // ヘッダーのナビや「就職作品を見る」などのページ内リンクは、その層まで掘り進める
   document.addEventListener("click", (e) => {
-    if (!strata || !(e.target instanceof Element)) return;
+    if (!(e.target instanceof Element)) return;
     const a = e.target.closest('a[href^="#"]');
     if (!a) return;
     if (goToId(decodeURIComponent(a.getAttribute("href").slice(1)))) e.preventDefault();
@@ -955,12 +933,12 @@
 
   // アドレスバーで #team などに変えたときも、その層へ移る
   window.addEventListener("hashchange", () => {
-    if (strata) goToId(decodeURIComponent(location.hash.slice(1)));
+    goToId(decodeURIComponent(location.hash.slice(1)));
   });
 
   // キーボードで別の層のリンクに移ったら、その層まで掘る（上の層なら埋め戻す）
   document.addEventListener("focusin", (e) => {
-    if (!strata || performance.now() - lastPointer < 500) return;
+    if (performance.now() - lastPointer < 500) return;
     const k = L.findIndex((ly, i) => i > 0 && ly.sheet.contains(e.target));
     if (k < 1 || k === cur) return;
     readView();
@@ -968,66 +946,21 @@
     jumpTo(k, r.left - m.left + r.width / 2, r.top - m.top + r.height / 2 + viewY);
   });
 
-  /* ---------- モードの切り替え ---------- */
+  /* ---------- 開始 ---------- */
   function measureHeader() {
     root.style.setProperty("--dig-top", header.offsetHeight + "px");
   }
 
-  function setMode(flat, save) {
-    if (save) {
-      try {
-        if (flat) localStorage.setItem(MODE_KEY, "flat");
-        else localStorage.removeItem(MODE_KEY);
-      } catch (_) { /* 無視 */ }
-    }
-    // 普通に読むモードでは、読んでいたセクションの位置からページを表示する
-    let readingId = "";
-    if (flat && strata) {
-      const cur0 = navLinks.find((a) => a.hasAttribute("aria-current"));
-      readingId = cur0 ? cur0.getAttribute("href").slice(1) : "";
-    }
-    strata = !flat;
-    root.classList.toggle("dig-strata", strata);
-    root.classList.toggle("dig-flat", flat);
-    queue.length = parts.length = texts.length = rings.length = 0;
-    down = hover = null;
-    gridFlash = 0;
-    L.forEach((ly, i) => {
-      ly.layer.classList.remove("is-dug", "is-filling");
-      ly.sheet.classList.remove("is-diggable");
-      ly.sheet.style.clipPath = "";
-      ly.layer.style.zIndex = strata ? String(10 + L.length - i) : "";
-      if (strata) ly.layer.scrollTop = 0;
-    });
-    updateNav();
-    const behavior = root.style.scrollBehavior;
-    root.style.scrollBehavior = "auto";
-    const sec = readingId && readingId !== "top" && document.getElementById(readingId);
-    if (sec) sec.scrollIntoView({ block: "start" });
-    else window.scrollTo(0, 0);
-    root.style.scrollBehavior = behavior;
-    if (strata) measureHeader();
-  }
-
-  function startStrata(k) {
-    setMode(false, true);
-    if (k > 0) markStarted();
-    enter(k, k === 0 ? "fill" : "init");
-  }
-
-  /* ---------- 開始 ---------- */
   showSound();
-  let preferFlat = false;
-  try { preferFlat = localStorage.getItem(MODE_KEY) === "flat"; } catch (_) { /* 無視 */ }
-  if (preferFlat) {
-    setMode(true, false);
-  } else {
-    // URL に #team などが付いていたら、その層から始める
-    const id = decodeURIComponent(location.hash.slice(1));
-    const k = indexOfId(id);
-    if (k > 0) pendingId = id;
-    startStrata(k > 0 ? k : 0);
-  }
+  root.classList.add("dig-strata");
+  L.forEach((ly, i) => { ly.layer.style.zIndex = String(10 + L.length - i); });
+  window.scrollTo(0, 0);
+  measureHeader();
+  // URL に #team などが付いていたら、その層から始める
+  const startId = decodeURIComponent(location.hash.slice(1));
+  const startK = indexOfId(startId);
+  if (startK > 0) pendingId = startId;
+  enter(startK > 0 ? startK : 0, startK > 0 ? "init" : "fill");
   lastX = SW / 2;
   lastY = H / 2;
 
@@ -1036,7 +969,7 @@
   const onResize = () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (!strata || phase === "clearing") return;
+      if (phase === "clearing") return;
       measureHeader();
       setup(true);
     }, 120);
